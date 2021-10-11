@@ -1,45 +1,79 @@
-from bs4 import BeautifulSoup
 import requests
+from bs4 import BeautifulSoup
+import re
+import csv
+import math
 
-url = "https://camp-fire.jp/projects/category/food"
-base_url = "https://camp-fire.jp"
-res = requests.get(url)
-soup = BeautifulSoup(res.text , 'html.parser')
+def get_info(box,class_selector,default_text):
+    info_box = box.select(f'div.overview > div.{class_selector}')
+    if info_box:
+        before_info = info_box[0].get_text()
+        # 数字のみにする
+        info = re.sub(r"\D", "", before_info)
+    else:
+        info = default_text
 
+    return info
 
-# 取得したい情報
-# timeline画面:　　title リンク
-# 詳細画面：　　支援者数,残り日数,支援総額,目標金額,達成率,説明
-item_info = {"title":"","link":"","支援者数":0,"残り日数":0,"目標金額":0,"支援総額":0,"達成率":0}
-item_arr = []
+all_data_list = []
 
+i = 1
+project_numbers = 0
+page_numbers = 10000
+while i <= page_numbers:
+    target_url = f"https://camp-fire.jp/projects/search?page={i}&word=food&category=food"
+    r = requests.get(target_url)
+    soup = BeautifulSoup(r.text, 'lxml')
 
-info = soup.find("div",{"class":"boxes4 clearfix"})
-# titleの取得
-titles = info.find_all('h4')
-title_arr = [title.get_text() for title in titles]
+    # ページ数取得
+    if i == 1:
+        before_project_numbers = soup.select('body > div.projects-search.layouts-projects.projects-search.wrapper > div > section > div > div.titlebox.link-more > h2')[0].get_text()
+        project_numbers = re.sub(r"\D", "", before_project_numbers)
+        page_numbers = math.ceil(int(project_numbers) / 20)
 
-# linkの取得
-link_arr = []
-links = info.find_all('div',{"class":"box-thumbnail"})
-for l in links:
-    links_a = l.find_all('a')
-    if len(links_a) > 1:
-        u = links_a[len(links_a)-1].get("href")
-    link_arr.append(base_url + u)
+    # all_boxes = soup.find('div',{'class':'box'})
+    all_boxes = soup.select('body > div.projects-search.layouts-projects.projects-search.wrapper > div > section > div > div.sp-box-outer > div.boxes4.clearfix > div')
 
-# 支援者数
-supporter_count = info.find_all('div',{"class":"rest"})
-supporters = [(sc.get_text()).replace("\n","")  for sc in supporter_count]
+    # スクレイピングで情報取得
+    for box in all_boxes:
+        a = box.select('div.box-title a')[-1]
+        if a:
+            title = a.select('h4')[0].get_text()
+            link = a['href']
+        else:
+            continue
+        print(title)
 
-#残り日数
- 
+        total = get_info(box,'total','-')
+        supporter = get_info(box,'rest','-')
+        day = get_info(box,'per','-')
+        if day == "":
+            day = "終了"
 
-# print(supporters)
+        # 詳細ページへ
+        detail_url = f'https://camp-fire.jp{link}'
+        detail_r = requests.get(detail_url)
+        detail_soup = BeautifulSoup(detail_r.text, 'lxml')
 
-for i in range(len(title_arr)):
-    item_info["title"] = title_arr[i]
-    item_info["link"] = link_arr[i]
-    item_arr.append(item_info)
+        target_price_box = detail_soup.select('div.project_status > div > span')
+        if target_price_box:
+            before_target_price = target_price_box[0].get_text()
+            target_price = re.sub(r"\D", "", before_target_price)
+        else:
+            target_price = "-"
 
-# print(len(item_arr))
+        message_box = detail_soup.select('section.caption.sp-none > h2')
+        if message_box:
+            message = message_box[0].get_text()
+        else:
+            message = "-"
+
+        data_list = [title,supporter,day,total,target_price,message,detail_url]
+        all_data_list.append(data_list)
+        # print(title,link,total,supporter,day,target_price,message)
+
+    i += 1
+
+with open('data.csv','a') as f:
+    writer = csv.writer(f)
+    writer.writerows(all_data_list)
